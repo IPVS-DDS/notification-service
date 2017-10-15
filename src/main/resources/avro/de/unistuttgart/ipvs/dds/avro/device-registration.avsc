@@ -1,0 +1,25 @@
+{
+  "namespace": "de.unistuttgart.ipvs.dds.avro",
+  "type": "record",
+  "name": "DeviceRegistration",
+  "doc": "A message sent to register devices or update device information. Use the device's ID as message key.",
+  "fields": [
+    {
+      "name": "name",
+      "type": "string",
+      "doc": "The display name of the device."
+    },
+    {
+      "name": "description",
+      "type": "string",
+      "default": "",
+      "doc": "A more detailed description of the device and its purpose."
+    },
+    {
+      "name": "location",
+      "type": "string",
+      "default": "",
+      "doc": "A description of where the device is located at."
+    }
+  ]
+}

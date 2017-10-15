@@ -1,0 +1,37 @@
+{
+  "namespace": "de.unistuttgart.ipvs.dds.avro",
+  "type": "record",
+  "name": "NotificationEvent",
+  "fields": [
+    {
+      "name": "deviceName",
+      "type": "string",
+      "default": ""
+    },
+    {
+      "name": "deviceId",
+      "type": "string",
+      "default": ""
+    },
+    {
+      "name": "deviceLocation",
+      "type": [ "null", "string" ],
+      "default": null
+    },
+    {
+      "name": "sensorName",
+      "type": "string",
+      "default": ""
+    },
+    {
+      "name": "sensorId",
+      "type": "string",
+      "default": ""
+    },
+    {
+      "name": "message",
+      "type": "string",
+      "default": ""
+    }
+  ]
+}
