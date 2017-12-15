@@ -52,62 +52,78 @@ public class NotificationService {
         streamsProperties.put(StreamsConfig.APPLICATION_ID_CONFIG, applicationId);
         streamsProperties.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
 
+        // Get Serdes for every used data type.
         final SpecificAvroSerde<TemperatureThresholdExceeded> eventSerde = createSerde(schemaRegistry);
         final SpecificAvroSerde<SensorRegistration> sensorRegistrationSerde = createSerde(schemaRegistry);
         final SpecificAvroSerde<DeviceRegistration> deviceRegistrationSerde = createSerde(schemaRegistry);
         final SpecificAvroSerde<NotificationEvent> notificationSerde = createSerde(schemaRegistry);
 
         final KStreamBuilder builder = new KStreamBuilder();
+
+        // Create a stream for reading TemperatureThresholdExceeded events.
         final KStream<String, TemperatureThresholdExceeded> events = builder.stream(
                 Serdes.String(),
                 eventSerde,
                 inputTopic
         );
+        // Create a KTable for looking up sensor metadata by sensor id.
         final KTable<String, SensorRegistration> sensorRegistry = builder.table(Serdes.String(), sensorRegistrationSerde, "sensor-registration");
+        // Create a KTable for looking up device metadata by sensor id.
         final GlobalKTable<String, DeviceRegistration> deviceRegistry = builder.globalTable(Serdes.String(), deviceRegistrationSerde, "device-registration");
 
+        // Create a factory for NotificationEvents.
         final NotificationEvent.Builder notificationBuilder = NotificationEvent.newBuilder();
-        events.map((key, event) -> {
-            final NotificationEvent notification = notificationBuilder.build();
-            notification.setSensorId(key);
-            if (event.getMaxTransgression().equals(event.getAverageTransgression())) {
-                // First transgression
-                notification.setMessage("the measured temperature now exceeds the threshold of "
-                        + event.getTemperatureThreshold() + "C at " + event.getAverageTransgression() + "C");
-            } else {
-                // Last transgression
-                notification.setMessage("the measured temperature no longer exceeds the threshold of "
-                        + event.getTemperatureThreshold() + "C after " + event.getExceededForMs() + "ms. "
-                        + "During this time, the average measurement was at " + event.getAverageTransgression() + "C "
-                        + "with a maximum of " + event.getMaxTransgression() + "C");
-            }
-            return new KeyValue<>(key, notification);
-        }).join(sensorRegistry, (event, sensor) -> {
-            event.setSensorName(sensor.getName());
-            event.setDeviceId(sensor.getDeviceId());
-            return event;
-        }, Serdes.String(), notificationSerde).join(deviceRegistry, (eventKey, event) -> event.getDeviceId(), (event, device) -> {
-            event.setDeviceName(device.getName());
-            event.setDeviceLocation(device.getLocation());
-            return event;
-        }).foreach((key, event) -> {
-            StringBuilder message = new StringBuilder();
-            message.append("Sensor ").append(event.getSensorName());
-            message.append(" (").append(event.getSensorId()).append(") of ");
-            message.append("device ").append(event.getDeviceName());
-            message.append(" (").append(event.getDeviceId()).append(") ");
-            if (event.getDeviceLocation() != null && !event.getDeviceLocation().equals("")) {
-                message.append("located at ").append(event.getDeviceLocation()).append(" ");
-            }
-            message.append("reports that ");
-            message.append(event.getMessage());
-            message.append('.');
+        events
+            // Initialise the notification event.
+            .map((key, event) -> {
+                final NotificationEvent notification = notificationBuilder.build();
+                notification.setSensorId(key);
+                if (event.getMaxTransgression().equals(event.getAverageTransgression())) {
+                    // First transgression
+                    notification.setMessage("the measured temperature now exceeds the threshold of "
+                            + event.getTemperatureThreshold() + "C at " + event.getAverageTransgression() + "C");
+                } else {
+                    // Last transgression
+                    notification.setMessage("the measured temperature no longer exceeds the threshold of "
+                            + event.getTemperatureThreshold() + "C after " + event.getExceededForMs() + "ms. "
+                            + "During this time, the average measurement was at " + event.getAverageTransgression() + "C "
+                            + "with a maximum of " + event.getMaxTransgression() + "C");
+                }
+                return new KeyValue<>(key, notification);
+            })
+            // Correlate the event's sensorId with sensor metadata if possible.
+            .leftJoin(sensorRegistry, (event, sensor) -> {
+                if (sensor != null) {
+                    event.setSensorName(sensor.getName());
+                    event.setDeviceId(sensor.getDeviceId());
+                }
+                return event;
+            }, Serdes.String(), notificationSerde)
+            // Correlate the event's sensorId with the corresponding device metadata if possible.
+            .join(deviceRegistry, (eventKey, event) -> event.getDeviceId(), (event, device) -> {
+                event.setDeviceName(device.getName());
+                event.setDeviceLocation(device.getLocation());
+                return event;
+            })
+            // Create and send a Telegram message every time a NotificationEvent is received.
+            .foreach((key, event) -> {
+                StringBuilder message = new StringBuilder();
+                message.append("Sensor ").append(event.getSensorName());
+                message.append(" (").append(event.getSensorId()).append(") of ");
+                message.append("device ").append(event.getDeviceName());
+                message.append(" (").append(event.getDeviceId()).append(") ");
+                if (event.getDeviceLocation() != null && !event.getDeviceLocation().equals("")) {
+                    message.append("located at ").append(event.getDeviceLocation()).append(" ");
+                }
+                message.append("reports that ");
+                message.append(event.getMessage());
+                message.append('.');
 
-            SendMessage req = new SendMessage(chatId, message.toString())
-                    .parseMode(ParseMode.HTML)
-                    .disableNotification(true);
-            telegramBot.execute(req);
-        });
+                SendMessage req = new SendMessage(chatId, message.toString())
+                        .parseMode(ParseMode.HTML)
+                        .disableNotification(true);
+                telegramBot.execute(req);
+            });
 
         final KafkaStreams streams = new KafkaStreams(builder, streamsProperties);
         streams.start();
